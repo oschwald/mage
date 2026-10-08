@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 )
 
 var logger = log.New(os.Stderr, "", 0)
@@ -58,10 +59,11 @@ var onces = &onceMap{
 
 // ResetDeps clears the dependency cache used by Deps, CtxDeps, SerialDeps, and
 // SerialCtxDeps. It is intended for tests that need to run the same dependencies
-// more than once in a single process. Do not call ResetDeps while dependencies
-// are running.
+// more than once in a single process. It also makes Deps read MAGEFILE_JOBS
+// again. Do not call ResetDeps while dependencies are running.
 func ResetDeps() {
 	onces.Reset()
+	resetDepLimiter()
 }
 
 // SerialDeps is like Deps except it runs each dependency serially, instead of
@@ -70,9 +72,11 @@ func ResetDeps() {
 func SerialDeps(fns ...interface{}) {
 	funcs := checkFns(fns)
 	ctx := context.Background()
-	for i := range fns {
-		runDeps(ctx, funcs[i:i+1])
-	}
+	waitWithoutSlot(funcs, func() {
+		for i := range fns {
+			runDeps(ctx, funcs[i:i+1])
+		}
+	})
 }
 
 // SerialCtxDeps is like CtxDeps except it runs each dependency serially,
@@ -80,9 +84,11 @@ func SerialDeps(fns ...interface{}) {
 // dependencies that shouldn't be run at the same time.
 func SerialCtxDeps(ctx context.Context, fns ...interface{}) {
 	funcs := checkFns(fns)
-	for i := range fns {
-		runDeps(ctx, funcs[i:i+1])
-	}
+	waitWithoutSlot(funcs, func() {
+		for i := range fns {
+			runDeps(ctx, funcs[i:i+1])
+		}
+	})
 }
 
 // CtxDeps runs the given functions as dependencies of the calling function.
@@ -103,7 +109,33 @@ func SerialCtxDeps(ctx context.Context, fns ...interface{}) {
 // prototype allows for it.
 func CtxDeps(ctx context.Context, fns ...interface{}) {
 	funcs := checkFns(fns)
-	runDeps(ctx, funcs)
+	waitWithoutSlot(funcs, func() { runDeps(ctx, funcs) })
+}
+
+// waitWithoutSlot calls wait, which runs fns, with the calling target's slot
+// given back, so that fns can use it. If every fn already ran, there is nothing
+// to wait for, so the target keeps its slot.
+func waitWithoutSlot(fns []Fn, wait func()) {
+	l := depLimiter()
+	if l == nil || allRan(fns) {
+		wait()
+		return
+	}
+	l.release()
+	// The deferred call also runs if wait panics with a dependency error. A
+	// Background context never ends, so this acquire cannot fail.
+	defer func() { _ = l.acquire(context.Background()) }()
+	wait()
+}
+
+// allRan reports whether every fn already ran.
+func allRan(fns []Fn) bool {
+	for _, f := range fns {
+		if atomic.LoadUint32(&onces.LoadOrStore(f).ran) == 0 {
+			return false
+		}
+	}
+	return true
 }
 
 // runDeps assumes you've already called checkFns.
@@ -138,12 +170,7 @@ func runDeps(ctx context.Context, fns []Fn) {
 		}()
 	}
 
-	// Give back this target's slot while it waits, so its dependencies can
-	// use it.
-	l := depLimiter()
-	l.release()
 	wg.Wait()
-	l.acquire()
 	if len(errs) > 0 {
 		panic(Fatal(exit, strings.Join(errs, "\n")))
 	}
@@ -218,6 +245,7 @@ type onceFun struct {
 	once *sync.Once
 	fn   Fn
 	err  error
+	ran  uint32 // set to 1 after fn returns
 
 	displayName string
 }
@@ -226,8 +254,12 @@ type onceFun struct {
 // the same error output.
 func (o *onceFun) run(ctx context.Context) error {
 	o.once.Do(func() {
+		defer atomic.StoreUint32(&o.ran, 1)
 		l := depLimiter()
-		l.acquire()
+		if err := l.acquire(ctx); err != nil {
+			o.err = err
+			return
+		}
 		defer l.release()
 		if Verbose() {
 			logger.Println("Running dependency:", displayName(o.fn.Name()))

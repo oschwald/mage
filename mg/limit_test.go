@@ -1,7 +1,9 @@
 package mg
 
 import (
+	"context"
 	"errors"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -92,8 +94,7 @@ func TestDepsNoLimitByDefault(t *testing.T) {
 	// Ignore MAGEFILE_JOBS from the shell, and any limiter an earlier test
 	// made from it.
 	t.Setenv(JobsEnv, "")
-	depLimiterOnce = sync.Once{}
-	depLimiterVal = nil
+	ResetDeps()
 	t.Cleanup(ResetDeps)
 	if depLimiter() != nil {
 		t.Fatalf("expected no limiter when %s is not set", JobsEnv)
@@ -107,6 +108,81 @@ func TestDepsNoLimitByDefault(t *testing.T) {
 	finishes(t, func() { Deps(F(meet, "a"), F(meet, "b"), F(meet, "c"), F(meet, "d")) })
 }
 
+func TestDepsLimitAllowsMaxAtOnce(t *testing.T) {
+	useLimiter(t, 2)
+	tr := &tracker{}
+	leaf := func(string) { tr.work() }
+
+	finishes(t, func() { Deps(F(leaf, "a"), F(leaf, "b"), F(leaf, "c"), F(leaf, "d")) })
+	if tr.max != 2 {
+		t.Fatalf("expected 2 targets at once, got %d", tr.max)
+	}
+}
+
+func TestDepsLimitCancelStopsQueuedDeps(t *testing.T) {
+	useLimiter(t, 1)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var started int32
+	leaf := func(string) {
+		atomic.AddInt32(&started, 1)
+		time.Sleep(50 * time.Millisecond)
+	}
+	time.AfterFunc(10*time.Millisecond, cancel)
+
+	finishes(t, func() {
+		defer func() {
+			if recover() == nil {
+				t.Error("expected CtxDeps to panic with the cancel error")
+			}
+		}()
+		CtxDeps(ctx, F(leaf, "a"), F(leaf, "b"), F(leaf, "c"), F(leaf, "d"))
+	})
+	if started != 1 {
+		t.Fatalf("expected 1 dependency to start before the cancel, got %d", started)
+	}
+}
+
+func TestDepsLimitKeepsSlotWhenDepsAlreadyRan(t *testing.T) {
+	l := useLimiter(t, 1)
+	a := func() {}
+	b := func() {}
+	Deps(a, b)
+
+	// A queued target waits for the only slot, which the test goroutine holds.
+	queued := make(chan struct{})
+	go func() {
+		_ = l.acquire(context.Background())
+		close(queued)
+	}()
+	time.Sleep(10 * time.Millisecond)
+
+	finishes(t, func() {
+		Deps(a, b)
+		SerialDeps(a, b)
+	})
+	select {
+	case <-queued:
+		t.Fatal("expected Deps to keep its slot because its dependencies already ran")
+	default:
+	}
+	l.release()
+	<-queued
+	l.release()
+}
+
+func TestResetDepsReadsJobsAgain(t *testing.T) {
+	useLimiter(t, 2)
+	if got := depLimiter().max; got != 2 {
+		t.Fatalf("expected a limit of 2, got %d", got)
+	}
+	t.Setenv(JobsEnv, "3")
+	ResetDeps()
+	if got := depLimiter().max; got != 3 {
+		t.Fatalf("expected a limit of 3 after ResetDeps, got %d", got)
+	}
+}
+
 func TestJobs(t *testing.T) {
 	tests := map[string]int{"": 0, "abc": 0, "-1": 0, "0": 0, "3": 3}
 	for val, want := range tests {
@@ -117,18 +193,15 @@ func TestJobs(t *testing.T) {
 	}
 }
 
-// useLimiter makes Deps use a limiter with maxSlots slots. The test goroutine
-// acts as the top-level target, so it holds the first slot.
+// useLimiter sets MAGEFILE_JOBS to maxSlots and returns the limiter that Deps
+// uses. The test goroutine acts as the top-level target, so it holds the first
+// slot.
 func useLimiter(t *testing.T, maxSlots int) *limiter {
 	t.Helper()
-	l := newLimiter(maxSlots, 1)
-	depLimiterOnce.Do(func() {})
-	depLimiterVal = l
-	t.Cleanup(func() {
-		depLimiterVal = nil
-		ResetDeps()
-	})
-	return l
+	t.Setenv(JobsEnv, strconv.Itoa(maxSlots))
+	ResetDeps()
+	t.Cleanup(ResetDeps)
+	return depLimiter()
 }
 
 // tracker records the maximum number of targets that do work at once.

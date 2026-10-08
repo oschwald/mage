@@ -32,7 +32,11 @@ func TestDepsRunOnce(t *testing.T) {
 		// cool... this should be plenty of time for the goroutine to have run
 	}
 	// Wait for Deps to return, so it does not overlap with later tests.
-	<-finished
+	select {
+	case <-finished:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Deps did not return within 5 seconds")
+	}
 }
 
 func TestResetDepsAllowsDependenciesToRunAgain(t *testing.T) {

@@ -70,11 +70,11 @@ func ResetDeps() {
 // in parallel. This can be useful for resource intensive dependencies that
 // shouldn't be run at the same time.
 func SerialDeps(fns ...interface{}) {
-	funcs := checkFns(fns)
+	deps := loadDeps(checkFns(fns))
 	ctx := context.Background()
-	waitWithoutSlot(funcs, func() {
-		for i := range fns {
-			runDeps(ctx, funcs[i:i+1])
+	waitWithoutSlot(deps, func() {
+		for i := range deps {
+			runDeps(ctx, deps[i:i+1])
 		}
 	})
 }
@@ -83,10 +83,10 @@ func SerialDeps(fns ...interface{}) {
 // instead of in parallel. This can be useful for resource intensive
 // dependencies that shouldn't be run at the same time.
 func SerialCtxDeps(ctx context.Context, fns ...interface{}) {
-	funcs := checkFns(fns)
-	waitWithoutSlot(funcs, func() {
-		for i := range fns {
-			runDeps(ctx, funcs[i:i+1])
+	deps := loadDeps(checkFns(fns))
+	waitWithoutSlot(deps, func() {
+		for i := range deps {
+			runDeps(ctx, deps[i:i+1])
 		}
 	})
 }
@@ -108,44 +108,52 @@ func SerialCtxDeps(ctx context.Context, fns ...interface{}) {
 // goroutines. Each function is given the context provided if the function
 // prototype allows for it.
 func CtxDeps(ctx context.Context, fns ...interface{}) {
-	funcs := checkFns(fns)
-	waitWithoutSlot(funcs, func() { runDeps(ctx, funcs) })
+	deps := loadDeps(checkFns(fns))
+	waitWithoutSlot(deps, func() { runDeps(ctx, deps) })
 }
 
-// waitWithoutSlot calls wait, which runs fns, with the calling target's slot
-// given back, so that fns can use it. If every fn already ran, there is nothing
-// to wait for, so the target keeps its slot.
-func waitWithoutSlot(fns []Fn, wait func()) {
+// loadDeps returns the onceFun for each fn.
+func loadDeps(fns []Fn) []*onceFun {
+	deps := make([]*onceFun, len(fns))
+	for i, f := range fns {
+		deps[i] = onces.LoadOrStore(f)
+	}
+	return deps
+}
+
+// waitWithoutSlot calls wait, which runs deps, with the calling target's slot
+// given back, so that deps can use it. If every dep is already done, there is
+// nothing to wait for, so the target keeps its slot.
+func waitWithoutSlot(deps []*onceFun, wait func()) {
 	l := depLimiter()
-	if l == nil || allRan(fns) {
+	if l == nil || allDone(deps) {
 		wait()
 		return
 	}
 	l.release()
-	// The deferred call also runs if wait panics with a dependency error. It
-	// passes a nil done channel, so it waits for a slot however long it takes.
-	defer l.acquire(nil)
+	// This also runs if wait panics with a dependency error.
+	defer l.acquire()
 	wait()
 }
 
-// allRan reports whether every fn already ran.
-func allRan(fns []Fn) bool {
-	for _, f := range fns {
-		if atomic.LoadUint32(&onces.LoadOrStore(f).ran) == 0 {
+// allDone reports whether every dep is done.
+func allDone(deps []*onceFun) bool {
+	for _, dep := range deps {
+		if atomic.LoadUint32(&dep.done) == 0 {
 			return false
 		}
 	}
 	return true
 }
 
-// runDeps assumes you've already called checkFns.
-func runDeps(ctx context.Context, fns []Fn) {
+// runDeps runs deps in parallel and waits for them.
+func runDeps(ctx context.Context, deps []*onceFun) {
 	mu := &sync.Mutex{}
 	var errs []string
 	var exit int
 	wg := &sync.WaitGroup{}
-	for _, f := range fns {
-		fn := onces.LoadOrStore(f)
+	for _, dep := range deps {
+		fn := dep
 		wg.Add(1)
 		go func() {
 			defer func() {
@@ -245,7 +253,7 @@ type onceFun struct {
 	once *sync.Once
 	fn   Fn
 	err  error
-	ran  uint32 // set to 1 after fn returns
+	done uint32 // set to 1 when fn returns or panics
 
 	displayName string
 }
@@ -254,12 +262,9 @@ type onceFun struct {
 // the same error output.
 func (o *onceFun) run(ctx context.Context) error {
 	o.once.Do(func() {
-		defer atomic.StoreUint32(&o.ran, 1)
+		defer atomic.StoreUint32(&o.done, 1)
 		l := depLimiter()
-		if !l.acquire(ctx.Done()) {
-			o.err = ctx.Err()
-			return
-		}
+		l.acquire()
 		defer l.release()
 		if Verbose() {
 			logger.Println("Running dependency:", displayName(o.fn.Name()))

@@ -119,28 +119,43 @@ func TestDepsLimitAllowsMaxAtOnce(t *testing.T) {
 	}
 }
 
-func TestDepsLimitCancelStopsQueuedDeps(t *testing.T) {
+func TestDepsLimitCancelledWaitDoesNotFailDep(t *testing.T) {
 	useLimiter(t, 1)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	var started int32
-	leaf := func(string) {
-		atomic.AddInt32(&started, 1)
-		time.Sleep(50 * time.Millisecond)
-	}
+	blocker := func() { time.Sleep(50 * time.Millisecond) }
+	var genRuns int32
+	gen := func() { atomic.AddInt32(&genRuns, 1) }
+	// gen waits for the slot that blocker holds while ctx is cancelled.
 	time.AfterFunc(10*time.Millisecond, cancel)
 
 	finishes(t, func() {
-		defer func() {
-			if recover() == nil {
-				t.Error("expected CtxDeps to panic with the cancel error")
-			}
-		}()
-		CtxDeps(ctx, F(leaf, "a"), F(leaf, "b"), F(leaf, "c"), F(leaf, "d"))
+		CtxDeps(ctx, blocker, gen)
+		Deps(gen) //nolint:contextcheck // a later caller, whose context is not cancelled
 	})
-	if started != 1 {
-		t.Fatalf("expected 1 dependency to start before the cancel, got %d", started)
+	if genRuns != 1 {
+		t.Fatalf("expected gen to run once, ran %d times", genRuns)
 	}
+}
+
+func TestResetDepsWhileDepsRun(t *testing.T) {
+	// With a limit, ResetDeps during Deps breaks the slot count, as the
+	// ResetDeps doc says. Without a limit, it must at least not race.
+	t.Setenv(JobsEnv, "")
+	ResetDeps()
+	t.Cleanup(ResetDeps)
+	f := func() {}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for i := 0; i < 100; i++ {
+			ResetDeps()
+		}
+	}()
+	for i := 0; i < 100; i++ {
+		Deps(f)
+	}
+	<-done
 }
 
 func TestDepsLimitKeepsSlotWhenDepsAlreadyRan(t *testing.T) {
@@ -152,14 +167,18 @@ func TestDepsLimitKeepsSlotWhenDepsAlreadyRan(t *testing.T) {
 	// A queued target waits for the only slot, which the test goroutine holds.
 	queued := make(chan struct{})
 	go func() {
-		l.acquire(nil)
+		l.acquire()
 		close(queued)
 	}()
 	time.Sleep(10 * time.Millisecond)
 
+	// Repeat the calls, so that a Deps that gives the slot away fails this
+	// test even if the queued goroutine starts to wait late.
 	finishes(t, func() {
-		Deps(a, b)
-		SerialDeps(a, b)
+		for i := 0; i < 100; i++ {
+			Deps(a, b)
+			SerialDeps(a, b)
+		}
 	})
 	select {
 	case <-queued:

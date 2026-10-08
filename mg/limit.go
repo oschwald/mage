@@ -7,63 +7,59 @@ import "sync"
 // chain of dependencies deeper than the limit cannot deadlock.
 type limiter struct {
 	mu     sync.Mutex
+	cond   *sync.Cond
 	max    int
 	active int
-	// freed is closed and replaced each time a slot is freed, to wake the
-	// goroutines that wait in acquire.
-	freed chan struct{}
 }
 
 var (
-	depLimiterOnce sync.Once
-	depLimiterVal  *limiter
+	depLimiterMu  sync.Mutex
+	depLimiterSet bool
+	depLimiterVal *limiter
 )
 
 // depLimiter returns the limiter for MAGEFILE_JOBS, or nil if there is no
 // limit.
 func depLimiter() *limiter {
-	depLimiterOnce.Do(func() {
+	depLimiterMu.Lock()
+	defer depLimiterMu.Unlock()
+	if !depLimiterSet {
+		depLimiterSet = true
 		if n := Jobs(); n > 0 {
 			depLimiterVal = newLimiter(n)
 		}
-	})
+	}
 	return depLimiterVal
 }
 
 // newLimiter returns a limiter with maxSlots slots. The top-level target that
 // the mage binary runs holds the first slot.
 func newLimiter(maxSlots int) *limiter {
-	return &limiter{max: maxSlots, active: 1, freed: make(chan struct{})}
+	l := &limiter{max: maxSlots, active: 1}
+	l.cond = sync.NewCond(&l.mu)
+	return l
 }
 
 // resetDepLimiter makes the next depLimiter call read MAGEFILE_JOBS again.
 func resetDepLimiter() {
-	depLimiterOnce = sync.Once{}
+	depLimiterMu.Lock()
+	defer depLimiterMu.Unlock()
+	depLimiterSet = false
 	depLimiterVal = nil
 }
 
-// acquire blocks until a slot is free, then takes it and returns true. It
-// returns false if done is closed before a slot is free. A nil done never
-// closes. A nil limiter does nothing and returns true.
-func (l *limiter) acquire(done <-chan struct{}) bool {
+// acquire blocks until a slot is free, then takes it. A nil limiter does
+// nothing.
+func (l *limiter) acquire() {
 	if l == nil {
-		return true
+		return
 	}
-	for {
-		l.mu.Lock()
-		if l.active < l.max {
-			l.active++
-			l.mu.Unlock()
-			return true
-		}
-		freed := l.freed
-		l.mu.Unlock()
-		select {
-		case <-freed:
-		case <-done:
-			return false
-		}
+	l.mu.Lock()
+	for l.active >= l.max {
+		l.cond.Wait()
 	}
+	l.active++
+	l.mu.Unlock()
 }
 
 // release gives back a slot. A nil limiter does nothing.
@@ -77,7 +73,6 @@ func (l *limiter) release() {
 	}
 	l.mu.Lock()
 	l.active--
-	close(l.freed)
-	l.freed = make(chan struct{})
 	l.mu.Unlock()
+	l.cond.Signal()
 }

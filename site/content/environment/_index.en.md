@@ -47,7 +47,7 @@ target and print the list of targets when you run `mage`.
 
 Set to a positive integer to limit how many targets do work at the same time
 (like running with `-j`). Zero, a negative number, or no value means no limit.
-The `-j` flag overrides this variable, so `-j 0` removes a limit set here.
+A `-j` value greater than 0 overrides this variable.
 
 ## MAGEFILE_MULTILINE
 

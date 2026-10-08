@@ -2,9 +2,13 @@ package mage
 
 import (
 	"bytes"
+	"errors"
+	"flag"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -422,4 +426,34 @@ func TestCompletionScriptContents(t *testing.T) {
 			t.Error("script should have Register-ArgumentCompleter")
 		}
 	})
+}
+
+func TestCompletionScriptsListAllFlags(t *testing.T) {
+	usage := &bytes.Buffer{}
+	if _, _, err := Parse(io.Discard, usage, []string{"-h"}); !errors.Is(err, flag.ErrHelp) {
+		t.Fatalf("expected flag.ErrHelp, got %v", err)
+	}
+	flags := regexp.MustCompile(`(?m)^\s+-(\w+)`).FindAllStringSubmatch(usage.String(), -1)
+	if len(flags) == 0 {
+		t.Fatalf("found no flags in usage text:\n%s", usage)
+	}
+
+	bin := "/usr/local/bin/mage"
+	scripts := map[string]struct {
+		script  string
+		pattern string
+	}{
+		"bash":       {bashCompletionScript(bin), `[" ]-%s[" ]`},
+		"zsh":        {zshCompletionScript(bin), `'-%s:`},
+		"fish":       {fishCompletionScript(bin), `-[sl] %s `},
+		"powershell": {powerShellCompletionScript(bin), `N='-%s'`},
+	}
+	for shell, s := range scripts {
+		for _, f := range flags {
+			name := f[1]
+			if !regexp.MustCompile(fmt.Sprintf(s.pattern, regexp.QuoteMeta(name))).MatchString(s.script) {
+				t.Errorf("%s completion script is missing -%s", shell, name)
+			}
+		}
+	}
 }

@@ -296,7 +296,7 @@ func bashCompletionScript(mageBin string) string {
 	return `_mage_completions() {
     local cur="${COMP_WORDS[COMP_CWORD]}"
     if [[ "$cur" == -* ]]; then
-        local flags="-l -h -v -f -debug -t -d -w -keep -compile -clean -init -version -gocmd -goos -goarch -ldflags -autocomplete -install -multiline"
+        local flags="-l -h -v -f -debug -t -j -d -w -keep -compile -clean -init -version -gocmd -goos -goarch -ldflags -autocomplete -install -multiline"
         COMPREPLY=($(compgen -W "$flags" -- "$cur"))
         return
     fi
@@ -321,6 +321,7 @@ _mage() {
             '-f:force recreation of compiled magefile'
             '-debug:turn on debug messages'
             '-t:timeout in duration parsable format'
+            '-j:maximum number of targets that do work at the same time'
             '-d:directory to read magefiles from'
             '-w:working directory where magefiles will run'
             '-keep:keep intermediate mage files around after running'
@@ -362,6 +363,7 @@ complete -c mage -s v -d 'show verbose output when running mage targets'
 complete -c mage -s f -d 'force recreation of compiled magefile'
 complete -c mage -l debug -d 'turn on debug messages'
 complete -c mage -s t -r -d 'timeout in duration parsable format'
+complete -c mage -s j -r -d 'maximum number of targets that do work at the same time'
 complete -c mage -s d -r -F -d 'directory to read magefiles from'
 complete -c mage -s w -r -F -d 'working directory where magefiles will run'
 complete -c mage -l keep -d 'keep intermediate mage files around after running'
@@ -392,6 +394,7 @@ Register-ArgumentCompleter -CommandName mage -ScriptBlock {
             @{N='-f'; D='force recreation of compiled magefile'},
             @{N='-debug'; D='turn on debug messages'},
             @{N='-t'; D='timeout in duration parsable format'},
+            @{N='-j'; D='maximum number of targets that do work at the same time'},
             @{N='-d'; D='directory to read magefiles from'},
             @{N='-w'; D='working directory where magefiles will run'},
             @{N='-keep'; D='keep intermediate mage files around'},

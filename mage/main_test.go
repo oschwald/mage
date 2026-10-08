@@ -72,6 +72,9 @@ func runmain(m *testing.M) error {
 	if err := os.Unsetenv(mg.TargetColorEnv); err != nil {
 		return err
 	}
+	if err := os.Unsetenv(mg.JobsEnv); err != nil {
+		return err
+	}
 	if err := resetTerm(); err != nil {
 		return err
 	}
@@ -2178,7 +2181,7 @@ func TestJobs(t *testing.T) {
 		min, max int
 	}{
 		{jobs: 1, min: 1, max: 1},
-		{jobs: 2, min: 1, max: 2},
+		{jobs: 2, min: 2, max: 2},
 		{jobs: 0, min: 3, max: 5},
 	}
 	for _, tt := range tests {
@@ -2248,7 +2251,7 @@ func TestCompiledJobsFlag(t *testing.T) {
 	}
 }
 
-func TestJobsZeroOverridesEnv(t *testing.T) {
+func TestJobsZeroKeepsEnv(t *testing.T) {
 	t.Setenv(mg.JobsEnv, "1")
 	stderr := &bytes.Buffer{}
 	stdout := &bytes.Buffer{}
@@ -2257,14 +2260,52 @@ func TestJobsZeroOverridesEnv(t *testing.T) {
 		Stdout:  stdout,
 		Stderr:  stderr,
 		Args:    []string{"max"},
-		Jobs:    0,
 		Timeout: 10 * time.Second,
 	}
 	if code := Invoke(inv); code != 0 {
 		t.Fatalf("expected 0, but got %v, stderr: %q, stdout: %q", code, stderr, stdout)
 	}
-	if got := stdout.String(); got == "max: 1\n" {
-		t.Fatalf("expected -j 0 to remove the limit from %s, got %q", mg.JobsEnv, got)
+	if got, want := stdout.String(), "max: 1\n"; got != want {
+		t.Fatalf("expected Jobs 0 to keep %s=1, got %q", mg.JobsEnv, got)
+	}
+}
+
+func TestJobsInvalidEnvWarns(t *testing.T) {
+	t.Setenv(mg.JobsEnv, "abc")
+	stderr := &bytes.Buffer{}
+	stdout := &bytes.Buffer{}
+	inv := Invocation{
+		Dir:     "testdata/jobs",
+		Stdout:  stdout,
+		Stderr:  stderr,
+		Args:    []string{"max"},
+		Timeout: 10 * time.Second,
+	}
+	if code := Invoke(inv); code != 0 {
+		t.Fatalf("expected 0, but got %v, stderr: %q, stdout: %q", code, stderr, stdout)
+	}
+	if want := "MAGEFILE_JOBS is not a valid int value: abc"; !strings.Contains(stderr.String(), want) {
+		t.Errorf("expected stderr to contain %q, got %q", want, stderr)
+	}
+}
+
+func TestParseJobs(t *testing.T) {
+	t.Setenv(mg.JobsEnv, "3")
+	tests := []struct {
+		args []string
+		want int
+	}{
+		{args: []string{"build"}, want: 3},
+		{args: []string{"-j", "2", "build"}, want: 2},
+	}
+	for _, tt := range tests {
+		inv, _, err := Parse(io.Discard, io.Discard, tt.args)
+		if err != nil {
+			t.Fatalf("%v: unexpected error: %v", tt.args, err)
+		}
+		if inv.Jobs != tt.want {
+			t.Errorf("%v: expected Jobs %d, got %d", tt.args, tt.want, inv.Jobs)
+		}
 	}
 }
 

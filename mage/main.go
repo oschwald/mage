@@ -96,7 +96,6 @@ func Main() int {
 
 // Invocation contains the args for invoking a run of Mage.
 type Invocation struct {
-	Debug        bool          // turn on debug messages
 	Dir          string        // directory to read magefiles from
 	WorkDir      string        // directory where magefiles will run
 	Force        bool          // forces recreation of the compiled binary
@@ -104,8 +103,9 @@ type Invocation struct {
 	List         bool          // tells the magefile to print out a list of targets
 	Help         bool          // tells the magefile to print out help for a specific target
 	Keep         bool          // tells mage to keep the generated main file after compiling
+	Debug        bool          // turn on debug messages
 	Timeout      time.Duration // tells mage to set a timeout to running the targets
-	Jobs         int           // maximum number of targets that do work at the same time, 0 for no limit
+	Jobs         int           // maximum number of targets that do work at the same time, if more than 0
 	CompileOut   string        // tells mage to compile a static binary to this path, but not execute
 	GOOS         string        // sets the GOOS when producing a binary with -compileout
 	GOARCH       string        // sets the GOARCH when producing a binary with -compileout
@@ -966,8 +966,9 @@ func RunCompiled(inv Invocation, exePath string, errlog *log.Logger) int {
 	if inv.Timeout > 0 {
 		c.Env = append(c.Env, fmt.Sprintf("MAGEFILE_TIMEOUT=%s", inv.Timeout.String()))
 	}
-	// Always set this, so -j 0 overrides MAGEFILE_JOBS from the environment.
-	c.Env = append(c.Env, fmt.Sprintf("%s=%d", mg.JobsEnv, inv.Jobs))
+	if inv.Jobs > 0 {
+		c.Env = append(c.Env, fmt.Sprintf("%s=%d", mg.JobsEnv, inv.Jobs))
+	}
 	debug.Print("running magefile with mage vars:\n", strings.Join(filter(c.Env, "MAGEFILE"), "\n"))
 	// catch SIGINT to allow magefile to handle them
 	sigCh := make(chan os.Signal, 1)

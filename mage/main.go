@@ -105,6 +105,7 @@ type Invocation struct {
 	Help         bool          // tells the magefile to print out help for a specific target
 	Keep         bool          // tells mage to keep the generated main file after compiling
 	Timeout      time.Duration // tells mage to set a timeout to running the targets
+	Jobs         int           // maximum number of targets that do work at the same time, 0 for no limit
 	CompileOut   string        // tells mage to compile a static binary to this path, but not execute
 	GOOS         string        // sets the GOOS when producing a binary with -compileout
 	GOARCH       string        // sets the GOARCH when producing a binary with -compileout
@@ -223,6 +224,7 @@ func Parse(stderr, stdout io.Writer, args []string) (inv Invocation, cmd Command
 	fs.BoolVar(&inv.Multiline, "multiline", mg.Multiline(), "retain line returns in help text")
 	fs.BoolVar(&inv.Help, "h", false, "show this help")
 	fs.DurationVar(&inv.Timeout, "t", 0, "timeout in duration parsable format (e.g. 5m30s)")
+	fs.IntVar(&inv.Jobs, "j", mg.Jobs(), "maximum number of targets that do work at the same time (0 means no limit)")
 	fs.BoolVar(&inv.Keep, "keep", false, "keep intermediate mage files around after running")
 	fs.StringVar(&inv.Dir, "d", "", "directory to read magefiles from")
 	fs.StringVar(&inv.WorkDir, "w", "", "working directory where magefiles will run")
@@ -277,6 +279,8 @@ Options:
   -ldflags    sets the ldflags for the binary created by -compile (default: "")
   -multiline  retain line returns in help docs (default: convert to spaces)
   -h          show description of a target
+  -j <int>
+              maximum number of targets that do work at the same time (0 means no limit)
   -keep       keep intermediate mage files around after running
   -t <string>
               timeout in duration parsable format (e.g. 5m30s)
@@ -962,6 +966,8 @@ func RunCompiled(inv Invocation, exePath string, errlog *log.Logger) int {
 	if inv.Timeout > 0 {
 		c.Env = append(c.Env, fmt.Sprintf("MAGEFILE_TIMEOUT=%s", inv.Timeout.String()))
 	}
+	// Always set this, so -j 0 overrides MAGEFILE_JOBS from the environment.
+	c.Env = append(c.Env, fmt.Sprintf("%s=%d", mg.JobsEnv, inv.Jobs))
 	debug.Print("running magefile with mage vars:\n", strings.Join(filter(c.Env, "MAGEFILE"), "\n"))
 	// catch SIGINT to allow magefile to handle them
 	sigCh := make(chan os.Signal, 1)

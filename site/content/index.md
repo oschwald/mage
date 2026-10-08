@@ -183,6 +183,8 @@ Options:
             use the given go binary to compile the output (default: "go")
   -goos     sets the GOOS for the binary created by -compile (default: current OS)
   -h        show description of a target
+  -j <int>
+            maximum number of targets that do work at the same time (0 means no limit)
   -keep     keep intermediate mage files around after running
   -t <string>
             timeout in duration parsable format (e.g. 5m30s)

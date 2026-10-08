@@ -51,6 +51,19 @@ tree ordering restrictions.  If run with `mg.SerialDeps` or `mg.SerialCtxDeps`,
 the dependencies are run serially, though each dependency or sub-dependency will
 still only ever be run once. 
 
+To limit how many targets do work at the same time, run mage with `-j N` or
+set `MAGEFILE_JOBS=N`. A target uses a slot while it runs, but not while it
+waits in `mg.Deps` for its own dependencies. Thus a dependency chain deeper
+than N does not deadlock. With `-j 1`, targets run one at a time.
+
+If a target calls `mg.Deps` from goroutines that it starts, more than N targets
+can run at the same time for a short period. Call `mg.Deps` from the target
+itself to keep the limit exact.
+
+The limit is in the `mg` package, so `-j` needs the version of
+`github.com/magefile/mage` in your `go.mod` to be the release that added
+`-j` or later. With an older version, `-j` has no effect.
+
 ## Contexts and Cancellation
 
 Dependencies that have a context.Context argument will be passed a context,

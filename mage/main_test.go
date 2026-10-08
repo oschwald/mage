@@ -2171,3 +2171,132 @@ func fileData(file string) (exeType, archSize, error) {
 	}
 	return -1, -1, errors.New("unrecognized executable format")
 }
+
+func TestJobs(t *testing.T) {
+	tests := []struct {
+		jobs     int
+		min, max int
+	}{
+		{jobs: 1, min: 1, max: 1},
+		{jobs: 2, min: 1, max: 2},
+		{jobs: 0, min: 3, max: 5},
+	}
+	for _, tt := range tests {
+		t.Run(strconv.Itoa(tt.jobs), func(t *testing.T) {
+			stderr := &bytes.Buffer{}
+			stdout := &bytes.Buffer{}
+			inv := Invocation{
+				Dir:     "testdata/jobs",
+				Stdout:  stdout,
+				Stderr:  stderr,
+				Args:    []string{"max"},
+				Jobs:    tt.jobs,
+				Timeout: 10 * time.Second,
+			}
+			if code := Invoke(inv); code != 0 {
+				t.Fatalf("expected 0, but got %v, stderr: %q, stdout: %q", code, stderr, stdout)
+			}
+			var got int
+			if _, err := fmt.Sscanf(stdout.String(), "max: %d", &got); err != nil {
+				t.Fatalf("can't parse %q: %v", stdout, err)
+			}
+			if got < tt.min || got > tt.max {
+				t.Fatalf("expected %d to %d targets at once, got %d", tt.min, tt.max, got)
+			}
+		})
+	}
+}
+
+func TestCompiledJobsFlag(t *testing.T) {
+	stderr := &bytes.Buffer{}
+	stdout := &bytes.Buffer{}
+	name := filepath.Join(t.TempDir(), "mage_out")
+	if runtime.GOOS == "windows" {
+		name += ".exe"
+	}
+	inv := Invocation{
+		Dir:        "./testdata/jobs",
+		Stdout:     stdout,
+		Stderr:     stderr,
+		CompileOut: name,
+	}
+	if code := Invoke(inv); code != 0 {
+		t.Fatalf("expected to exit with code 0, but got %v, stderr: %s", code, stderr)
+	}
+
+	// The flag and the environment variable both set the limit.
+	tests := []struct {
+		args []string
+		env  string
+	}{
+		{args: []string{"-j", "1", "max"}},
+		{args: []string{"max"}, env: mg.JobsEnv + "=1"},
+	}
+	for _, tt := range tests {
+		cmd := exec.CommandContext(context.Background(), name, tt.args...)
+		cmd.Env = os.Environ()
+		if tt.env != "" {
+			cmd.Env = append(cmd.Env, tt.env)
+		}
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("%v failed: %v\n%s", tt.args, err, out)
+		}
+		if got, want := string(out), "max: 1\n"; got != want {
+			t.Errorf("%v %s: expected %q, got %q", tt.args, tt.env, want, got)
+		}
+	}
+}
+
+func TestJobsZeroOverridesEnv(t *testing.T) {
+	t.Setenv(mg.JobsEnv, "1")
+	stderr := &bytes.Buffer{}
+	stdout := &bytes.Buffer{}
+	inv := Invocation{
+		Dir:     "testdata/jobs",
+		Stdout:  stdout,
+		Stderr:  stderr,
+		Args:    []string{"max"},
+		Jobs:    0,
+		Timeout: 10 * time.Second,
+	}
+	if code := Invoke(inv); code != 0 {
+		t.Fatalf("expected 0, but got %v, stderr: %q, stdout: %q", code, stderr, stdout)
+	}
+	if got := stdout.String(); got == "max: 1\n" {
+		t.Fatalf("expected -j 0 to remove the limit from %s, got %q", mg.JobsEnv, got)
+	}
+}
+
+func TestCompiledJobsInvalidEnv(t *testing.T) {
+	name := filepath.Join(t.TempDir(), "mage_out")
+	if runtime.GOOS == "windows" {
+		name += ".exe"
+	}
+	stderr := &bytes.Buffer{}
+	inv := Invocation{
+		Dir:        "./testdata/jobs",
+		Stdout:     io.Discard,
+		Stderr:     stderr,
+		CompileOut: name,
+	}
+	if code := Invoke(inv); code != 0 {
+		t.Fatalf("expected to exit with code 0, but got %v, stderr: %s", code, stderr)
+	}
+
+	cmd := exec.CommandContext(context.Background(), name, "max")
+	cmd.Env = append(os.Environ(), mg.JobsEnv+"=abc")
+	stdout := &bytes.Buffer{}
+	stderr.Reset()
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("expected an invalid %s to be ignored, got %v\n%s", mg.JobsEnv, err, stderr)
+	}
+	if want := "MAGEFILE_JOBS is not a valid int value: abc"; !strings.Contains(stderr.String(), want) {
+		t.Errorf("expected stderr to contain %q, got %q", want, stderr)
+	}
+	if got := stdout.String(); got == "max: 1\n" {
+		t.Errorf("expected no limit for an invalid %s, got %q", mg.JobsEnv, got)
+	}
+}

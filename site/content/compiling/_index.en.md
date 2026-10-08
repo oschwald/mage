@@ -29,6 +29,8 @@ Commands:
 
 Options:
   -h    show description of a target
+  -j <int>
+        maximum number of targets that do work at the same time (0 means no limit)
   -t <string>
         timeout in duration parsable format (e.g. 5m30s)
   -v    show verbose output when running targets

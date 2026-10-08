@@ -34,6 +34,7 @@ func main() {
 		List          bool          // print out a list of targets
 		Help          bool          // print out help for a specific target
 		Timeout       _time.Duration // set a timeout to running the targets
+		Jobs          int           // maximum number of targets that do work at the same time
 		Args          []string      // args contain the non-flag command-line arguments
 	}
 
@@ -62,6 +63,18 @@ func main() {
 		}
 		return d
 	}
+	parseInt := func(env string) int {
+		val := _os.Getenv(env)
+		if val == "" {
+			return 0
+		}
+		n, err := _strconv.Atoi(val)
+		if err != nil {
+			_log.Printf("warning: environment variable %s is not a valid int value: %v", env, val)
+			return 0
+		}
+		return n
+	}
 	args := arguments{}
 	fs := _flag.FlagSet{}
 	fs.SetOutput(_os.Stdout)
@@ -71,6 +84,7 @@ func main() {
 	fs.BoolVar(&args.List, "l", parseBool("MAGEFILE_LIST"), "list targets for this binary")
 	fs.BoolVar(&args.Help, "h", parseBool("MAGEFILE_HELP"), "print out help for a specific target")
 	fs.DurationVar(&args.Timeout, "t", parseDuration("MAGEFILE_TIMEOUT"), "timeout in duration parsable format (e.g. 5m30s)")
+	fs.IntVar(&args.Jobs, "j", parseInt("MAGEFILE_JOBS"), "maximum number of targets that do work at the same time (0 means no limit)")
 	fs.Usage = func() {
 		_fmt.Fprintf(_os.Stdout, ` + "`" + `
 %s [options] [target]
@@ -81,6 +95,8 @@ Commands:
 
 Options:
   -h    show description of a target
+  -j <int>
+        maximum number of targets that do work at the same time (0 means no limit)
   -t <string>
         timeout in duration parsable format (e.g. 5m30s)
   -v    show verbose output when running targets
@@ -221,6 +237,9 @@ Options:
 	} else {
 		_os.Setenv("MAGEFILE_VERBOSE", "0")
 	}
+
+	// Set MAGEFILE_JOBS so mg.Deps uses the -j flag value.
+	_os.Setenv("MAGEFILE_JOBS", _strconv.Itoa(args.Jobs))
 
 	_log.SetFlags(0)
 	if !args.Verbose {

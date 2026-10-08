@@ -43,6 +43,12 @@ a dependency has changed, run mage with the -f flag.
 If set to "1" or "true", tells the compiled magefile to ignore the default
 target and print the list of targets when you run `mage`.
 
+## MAGEFILE_JOBS
+
+Set to a positive integer to limit how many targets do work at the same time
+(like running with `-j`). Zero, a negative number, or no value means no limit.
+The `-j` flag overrides this variable, so `-j 0` removes a limit set here.
+
 ## MAGEFILE_MULTILINE
 
 If set to "1" or "true", tells the compiled magefile to print comments from the 

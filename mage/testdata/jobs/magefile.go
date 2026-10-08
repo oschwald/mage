@@ -11,6 +11,14 @@ import (
 	"github.com/magefile/mage/mg"
 )
 
+// Max runs a dependency chain and a fan-out, then prints the most targets that
+// did work at the same time.
+func Max() {
+	mg.Deps(chainA, mg.F(leaf, "a"), mg.F(leaf, "b"), mg.F(leaf, "c"), mg.F(leaf, "d"))
+	work()
+	fmt.Printf("max: %d\n", atomic.LoadInt32(&most))
+}
+
 var running, most int32
 
 func work() {
@@ -30,11 +38,3 @@ func leaf(string) { work() }
 func chainC() { work() }
 func chainB() { mg.Deps(chainC); work() }
 func chainA() { mg.Deps(chainB); work() }
-
-// Max runs a dependency chain and a fan-out, then prints the most targets that
-// did work at the same time.
-func Max() {
-	mg.Deps(chainA, mg.F(leaf, "a"), mg.F(leaf, "b"), mg.F(leaf, "c"), mg.F(leaf, "d"))
-	work()
-	fmt.Printf("max: %d\n", atomic.LoadInt32(&most))
-}

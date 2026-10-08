@@ -122,9 +122,9 @@ func waitWithoutSlot(fns []Fn, wait func()) {
 		return
 	}
 	l.release()
-	// The deferred call also runs if wait panics with a dependency error. A
-	// Background context never ends, so this acquire cannot fail.
-	defer func() { _ = l.acquire(context.Background()) }()
+	// The deferred call also runs if wait panics with a dependency error. It
+	// passes a nil done channel, so it waits for a slot however long it takes.
+	defer l.acquire(nil)
 	wait()
 }
 
@@ -256,8 +256,8 @@ func (o *onceFun) run(ctx context.Context) error {
 	o.once.Do(func() {
 		defer atomic.StoreUint32(&o.ran, 1)
 		l := depLimiter()
-		if err := l.acquire(ctx); err != nil {
-			o.err = err
+		if !l.acquire(ctx.Done()) {
+			o.err = ctx.Err()
 			return
 		}
 		defer l.release()

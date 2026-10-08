@@ -152,7 +152,7 @@ func TestDepsLimitKeepsSlotWhenDepsAlreadyRan(t *testing.T) {
 	// A queued target waits for the only slot, which the test goroutine holds.
 	queued := make(chan struct{})
 	go func() {
-		_ = l.acquire(context.Background())
+		l.acquire(nil)
 		close(queued)
 	}()
 	time.Sleep(10 * time.Millisecond)

@@ -1,9 +1,6 @@
 package mg
 
-import (
-	"context"
-	"sync"
-)
+import "sync"
 
 // limiter caps how many targets do work at the same time. A target holds a
 // slot while it runs, but gives the slot back while it waits in Deps. Thus a
@@ -45,25 +42,26 @@ func resetDepLimiter() {
 	depLimiterVal = nil
 }
 
-// acquire blocks until a slot is free, then takes it. It returns ctx.Err() if
-// ctx is done before a slot is free. A nil limiter does nothing.
-func (l *limiter) acquire(ctx context.Context) error {
+// acquire blocks until a slot is free, then takes it and returns true. It
+// returns false if done is closed before a slot is free. A nil done never
+// closes. A nil limiter does nothing and returns true.
+func (l *limiter) acquire(done <-chan struct{}) bool {
 	if l == nil {
-		return nil
+		return true
 	}
 	for {
 		l.mu.Lock()
 		if l.active < l.max {
 			l.active++
 			l.mu.Unlock()
-			return nil
+			return true
 		}
 		freed := l.freed
 		l.mu.Unlock()
 		select {
 		case <-freed:
-		case <-ctx.Done():
-			return ctx.Err()
+		case <-done:
+			return false
 		}
 	}
 }

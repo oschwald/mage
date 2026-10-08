@@ -19,6 +19,12 @@ func Max() {
 	fmt.Printf("max: %d\n", atomic.LoadInt32(&most))
 }
 
+func chainA() { mg.Deps(chainB); work() }
+func chainB() { mg.Deps(chainC); work() }
+func chainC() { work() }
+
+func leaf(string) { work() }
+
 var running, most int32
 
 func work() {
@@ -32,9 +38,3 @@ func work() {
 	time.Sleep(20 * time.Millisecond)
 	atomic.AddInt32(&running, -1)
 }
-
-func leaf(string) { work() }
-
-func chainC() { work() }
-func chainB() { mg.Deps(chainC); work() }
-func chainA() { mg.Deps(chainB); work() }

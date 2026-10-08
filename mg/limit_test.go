@@ -135,6 +135,11 @@ func TestDepsLimitDepsFromUserGoroutines(t *testing.T) {
 }
 
 func TestDepsNoLimitByDefault(t *testing.T) {
+	// Ignore MAGEFILE_JOBS from the shell, and any limiter an earlier test
+	// made from it.
+	t.Setenv(JobsEnv, "")
+	depLimiterOnce = sync.Once{}
+	depLimiterVal = nil
 	t.Cleanup(ResetDeps)
 	if depLimiter() != nil {
 		t.Fatalf("expected no limiter when %s is not set", JobsEnv)

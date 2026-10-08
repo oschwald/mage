@@ -14,7 +14,11 @@ func TestDepsRunOnce(t *testing.T) {
 	f := func() {
 		done <- struct{}{}
 	}
-	go Deps(f, f)
+	finished := make(chan struct{})
+	go func() {
+		Deps(f, f)
+		close(finished)
+	}()
 	select {
 	case <-done:
 		// cool
@@ -27,6 +31,8 @@ func TestDepsRunOnce(t *testing.T) {
 	case <-time.After(time.Millisecond * 100):
 		// cool... this should be plenty of time for the goroutine to have run
 	}
+	// Wait for Deps to return, so it does not overlap with later tests.
+	<-finished
 }
 
 func TestResetDepsAllowsDependenciesToRunAgain(t *testing.T) {

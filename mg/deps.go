@@ -138,7 +138,12 @@ func runDeps(ctx context.Context, fns []Fn) {
 		}()
 	}
 
+	// Give back this target's slot while it waits, so its dependencies can
+	// use it.
+	l := depLimiter()
+	l.release()
 	wg.Wait()
+	l.acquire()
 	if len(errs) > 0 {
 		panic(Fatal(exit, strings.Join(errs, "\n")))
 	}
@@ -221,6 +226,9 @@ type onceFun struct {
 // the same error output.
 func (o *onceFun) run(ctx context.Context) error {
 	o.once.Do(func() {
+		l := depLimiter()
+		l.acquire()
+		defer l.release()
 		if Verbose() {
 			logger.Println("Running dependency:", displayName(o.fn.Name()))
 		}

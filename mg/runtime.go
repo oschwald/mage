@@ -71,6 +71,11 @@ const MultilineEnv = "MAGEFILE_MULTILINE"
 // - BrightWhite.
 const TargetColorEnv = "MAGEFILE_TARGET_COLOR"
 
+// JobsEnv is the environment variable that sets the maximum number of targets
+// that do work at the same time. Zero, a negative number, or no value means no
+// limit.
+const JobsEnv = "MAGEFILE_JOBS"
+
 // Verbose reports whether a magefile was run with the verbose flag.
 func Verbose() bool {
 	b, _ := strconv.ParseBool(os.Getenv(VerboseEnv))
@@ -81,6 +86,16 @@ func Verbose() bool {
 func Debug() bool {
 	b, _ := strconv.ParseBool(os.Getenv(DebugEnv))
 	return b
+}
+
+// Jobs reports the maximum number of targets that do work at the same time, as
+// set by the -j flag. It returns 0 if there is no limit.
+func Jobs() int {
+	n, err := strconv.Atoi(os.Getenv(JobsEnv))
+	if err != nil || n < 0 {
+		return 0
+	}
+	return n
 }
 
 // GoCmd reports the command that Mage will use to build go code.  By default mage runs

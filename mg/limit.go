@@ -12,14 +12,6 @@ type limiter struct {
 	active int
 }
 
-// newLimiter returns a limiter with max slots, of which held are already in
-// use.
-func newLimiter(maxSlots, held int) *limiter {
-	l := &limiter{max: maxSlots, active: held}
-	l.cond = sync.NewCond(&l.mu)
-	return l
-}
-
 var (
 	depLimiterOnce sync.Once
 	depLimiterVal  *limiter
@@ -34,6 +26,14 @@ func depLimiter() *limiter {
 		}
 	})
 	return depLimiterVal
+}
+
+// newLimiter returns a limiter with max slots, of which held are already in
+// use.
+func newLimiter(maxSlots, held int) *limiter {
+	l := &limiter{max: maxSlots, active: held}
+	l.cond = sync.NewCond(&l.mu)
+	return l
 }
 
 // acquire blocks until a slot is free, then takes it. A nil limiter does

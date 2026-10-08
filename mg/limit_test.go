@@ -8,52 +8,6 @@ import (
 	"time"
 )
 
-// useLimiter makes Deps use a limiter with maxSlots slots. The test goroutine
-// acts as the top-level target, so it holds the first slot.
-func useLimiter(t *testing.T, maxSlots int) *limiter {
-	t.Helper()
-	l := newLimiter(maxSlots, 1)
-	depLimiterOnce.Do(func() {})
-	depLimiterVal = l
-	t.Cleanup(func() {
-		depLimiterVal = nil
-		ResetDeps()
-	})
-	return l
-}
-
-// tracker records the maximum number of targets that do work at once.
-type tracker struct {
-	running, max int32
-}
-
-func (tr *tracker) work() {
-	n := atomic.AddInt32(&tr.running, 1)
-	for {
-		m := atomic.LoadInt32(&tr.max)
-		if n <= m || atomic.CompareAndSwapInt32(&tr.max, m, n) {
-			break
-		}
-	}
-	time.Sleep(10 * time.Millisecond)
-	atomic.AddInt32(&tr.running, -1)
-}
-
-// finishes fails the test if f does not return within 5 seconds.
-func finishes(t *testing.T, f func()) {
-	t.Helper()
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		f()
-	}()
-	select {
-	case <-done:
-	case <-time.After(5 * time.Second):
-		t.Fatal("deadlock: Deps did not return within 5 seconds")
-	}
-}
-
 func TestDepsLimitChainDeeperThanLimit(t *testing.T) {
 	useLimiter(t, 2)
 	tr := &tracker{}
@@ -160,5 +114,51 @@ func TestJobs(t *testing.T) {
 		if got := Jobs(); got != want {
 			t.Errorf("%s=%q: expected %d, got %d", JobsEnv, val, want, got)
 		}
+	}
+}
+
+// useLimiter makes Deps use a limiter with maxSlots slots. The test goroutine
+// acts as the top-level target, so it holds the first slot.
+func useLimiter(t *testing.T, maxSlots int) *limiter {
+	t.Helper()
+	l := newLimiter(maxSlots, 1)
+	depLimiterOnce.Do(func() {})
+	depLimiterVal = l
+	t.Cleanup(func() {
+		depLimiterVal = nil
+		ResetDeps()
+	})
+	return l
+}
+
+// tracker records the maximum number of targets that do work at once.
+type tracker struct {
+	running, max int32
+}
+
+func (tr *tracker) work() {
+	n := atomic.AddInt32(&tr.running, 1)
+	for {
+		m := atomic.LoadInt32(&tr.max)
+		if n <= m || atomic.CompareAndSwapInt32(&tr.max, m, n) {
+			break
+		}
+	}
+	time.Sleep(10 * time.Millisecond)
+	atomic.AddInt32(&tr.running, -1)
+}
+
+// finishes fails the test if f does not return within 5 seconds.
+func finishes(t *testing.T, f func()) {
+	t.Helper()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		f()
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("deadlock: Deps did not return within 5 seconds")
 	}
 }

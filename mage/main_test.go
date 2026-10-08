@@ -2177,15 +2177,21 @@ func fileData(file string) (exeType, archSize, error) {
 
 func TestJobs(t *testing.T) {
 	tests := []struct {
-		jobs     int
-		min, max int
+		name       string
+		jobs       int
+		env        string
+		min, max   int
+		wantStderr string
 	}{
-		{jobs: 1, min: 1, max: 1},
-		{jobs: 2, min: 2, max: 2},
-		{jobs: 0, min: 3, max: 5},
+		{name: "-j 1", jobs: 1, min: 1, max: 1},
+		{name: "-j 2", jobs: 2, min: 2, max: 2},
+		{name: "no limit", min: 3, max: 5},
+		{name: "env", env: "1", min: 1, max: 1},
+		{name: "invalid env", env: "abc", min: 3, max: 5, wantStderr: "MAGEFILE_JOBS is not a valid int value: abc"},
 	}
 	for _, tt := range tests {
-		t.Run(strconv.Itoa(tt.jobs), func(t *testing.T) {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv(mg.JobsEnv, tt.env)
 			stderr := &bytes.Buffer{}
 			stdout := &bytes.Buffer{}
 			inv := Invocation{
@@ -2199,12 +2205,9 @@ func TestJobs(t *testing.T) {
 			if code := Invoke(inv); code != 0 {
 				t.Fatalf("expected 0, but got %v, stderr: %q, stdout: %q", code, stderr, stdout)
 			}
-			var got int
-			if _, err := fmt.Sscanf(stdout.String(), "max: %d", &got); err != nil {
-				t.Fatalf("can't parse %q: %v", stdout, err)
-			}
-			if got < tt.min || got > tt.max {
-				t.Fatalf("expected %d to %d targets at once, got %d", tt.min, tt.max, got)
+			checkMaxJobs(t, tt.name, stdout.String(), tt.min, tt.max)
+			if !strings.Contains(stderr.String(), tt.wantStderr) {
+				t.Errorf("expected stderr to contain %q, got %q", tt.wantStderr, stderr)
 			}
 		})
 	}
@@ -2227,65 +2230,32 @@ func TestCompiledJobsFlag(t *testing.T) {
 		t.Fatalf("expected to exit with code 0, but got %v, stderr: %s", code, stderr)
 	}
 
-	// The flag and the environment variable both set the limit.
 	tests := []struct {
-		args []string
-		env  string
+		args       []string
+		env        string
+		min, max   int
+		wantStderr string
 	}{
-		{args: []string{"-j", "1", "max"}},
-		{args: []string{"max"}, env: mg.JobsEnv + "=1"},
+		{args: []string{"-j", "1", "max"}, min: 1, max: 1},
+		{args: []string{"max"}, env: "1", min: 1, max: 1},
+		{args: []string{"-j", "0", "max"}, env: "1", min: 1, max: 1},
+		{args: []string{"max"}, env: "abc", min: 3, max: 5, wantStderr: "MAGEFILE_JOBS is not a valid int value: abc"},
 	}
 	for _, tt := range tests {
+		desc := fmt.Sprintf("%v %s=%s", tt.args, mg.JobsEnv, tt.env)
 		cmd := exec.CommandContext(context.Background(), name, tt.args...)
-		cmd.Env = os.Environ()
-		if tt.env != "" {
-			cmd.Env = append(cmd.Env, tt.env)
+		cmd.Env = append(os.Environ(), mg.JobsEnv+"="+tt.env)
+		stdout.Reset()
+		stderr.Reset()
+		cmd.Stdout = stdout
+		cmd.Stderr = stderr
+		if err := cmd.Run(); err != nil {
+			t.Fatalf("%s: failed: %v\n%s", desc, err, stderr)
 		}
-		out, err := cmd.CombinedOutput()
-		if err != nil {
-			t.Fatalf("%v failed: %v\n%s", tt.args, err, out)
+		checkMaxJobs(t, desc, stdout.String(), tt.min, tt.max)
+		if !strings.Contains(stderr.String(), tt.wantStderr) {
+			t.Errorf("%s: expected stderr to contain %q, got %q", desc, tt.wantStderr, stderr)
 		}
-		if got, want := string(out), "max: 1\n"; got != want {
-			t.Errorf("%v %s: expected %q, got %q", tt.args, tt.env, want, got)
-		}
-	}
-}
-
-func TestJobsZeroKeepsEnv(t *testing.T) {
-	t.Setenv(mg.JobsEnv, "1")
-	stderr := &bytes.Buffer{}
-	stdout := &bytes.Buffer{}
-	inv := Invocation{
-		Dir:     "testdata/jobs",
-		Stdout:  stdout,
-		Stderr:  stderr,
-		Args:    []string{"max"},
-		Timeout: 10 * time.Second,
-	}
-	if code := Invoke(inv); code != 0 {
-		t.Fatalf("expected 0, but got %v, stderr: %q, stdout: %q", code, stderr, stdout)
-	}
-	if got, want := stdout.String(), "max: 1\n"; got != want {
-		t.Fatalf("expected Jobs 0 to keep %s=1, got %q", mg.JobsEnv, got)
-	}
-}
-
-func TestJobsInvalidEnvWarns(t *testing.T) {
-	t.Setenv(mg.JobsEnv, "abc")
-	stderr := &bytes.Buffer{}
-	stdout := &bytes.Buffer{}
-	inv := Invocation{
-		Dir:     "testdata/jobs",
-		Stdout:  stdout,
-		Stderr:  stderr,
-		Args:    []string{"max"},
-		Timeout: 10 * time.Second,
-	}
-	if code := Invoke(inv); code != 0 {
-		t.Fatalf("expected 0, but got %v, stderr: %q, stdout: %q", code, stderr, stdout)
-	}
-	if want := "MAGEFILE_JOBS is not a valid int value: abc"; !strings.Contains(stderr.String(), want) {
-		t.Errorf("expected stderr to contain %q, got %q", want, stderr)
 	}
 }
 
@@ -2309,35 +2279,14 @@ func TestParseJobs(t *testing.T) {
 	}
 }
 
-func TestCompiledJobsInvalidEnv(t *testing.T) {
-	name := filepath.Join(t.TempDir(), "mage_out")
-	if runtime.GOOS == "windows" {
-		name += ".exe"
+// checkMaxJobs fails the test unless out reports from lo to hi targets at once.
+func checkMaxJobs(t *testing.T, desc, out string, lo, hi int) {
+	t.Helper()
+	var got int
+	if _, err := fmt.Sscanf(out, "max: %d", &got); err != nil {
+		t.Fatalf("%s: can't parse %q: %v", desc, out, err)
 	}
-	stderr := &bytes.Buffer{}
-	inv := Invocation{
-		Dir:        "./testdata/jobs",
-		Stdout:     io.Discard,
-		Stderr:     stderr,
-		CompileOut: name,
-	}
-	if code := Invoke(inv); code != 0 {
-		t.Fatalf("expected to exit with code 0, but got %v, stderr: %s", code, stderr)
-	}
-
-	cmd := exec.CommandContext(context.Background(), name, "max")
-	cmd.Env = append(os.Environ(), mg.JobsEnv+"=abc")
-	stdout := &bytes.Buffer{}
-	stderr.Reset()
-	cmd.Stdout = stdout
-	cmd.Stderr = stderr
-	if err := cmd.Run(); err != nil {
-		t.Fatalf("expected an invalid %s to be ignored, got %v\n%s", mg.JobsEnv, err, stderr)
-	}
-	if want := "MAGEFILE_JOBS is not a valid int value: abc"; !strings.Contains(stderr.String(), want) {
-		t.Errorf("expected stderr to contain %q, got %q", want, stderr)
-	}
-	if got := stdout.String(); got == "max: 1\n" {
-		t.Errorf("expected no limit for an invalid %s, got %q", mg.JobsEnv, got)
+	if got < lo || got > hi {
+		t.Errorf("%s: expected %d to %d targets at once, got %d", desc, lo, hi, got)
 	}
 }

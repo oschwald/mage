@@ -54,9 +54,7 @@ still only ever be run once.
 To limit how many targets do work at the same time, run mage with `-j N` or
 set `MAGEFILE_JOBS=N`. A target uses a slot while it runs, but not while it
 waits in `mg.Deps` for its own dependencies. Thus a dependency chain deeper
-than N does not deadlock. With `-j 1`, targets run one at a time. If the
-context passed to `mg.CtxDeps` is cancelled, dependencies that still wait for a
-slot do not start.
+than N does not deadlock. With `-j 1`, targets run one at a time.
 
 If a target calls `mg.Deps` from goroutines that it starts, more than N targets
 can run at the same time until those `mg.Deps` calls return. Call `mg.Deps`
@@ -65,6 +63,9 @@ from the target itself to keep the limit exact.
 The limit knows only about waits in `mg.Deps`. Targets that wait on each other
 in other ways can deadlock under a limit, for example through a channel, or
 through a mutex that a target holds while it calls `mg.Deps`.
+
+Programs that a target runs inherit `MAGEFILE_JOBS`. A nested `mage` run gets
+its own N slots, and tests that call `mg.Deps` run with the same limit.
 
 The limit is in the `mg` package, so `-j` needs the version of
 `github.com/magefile/mage` in your `go.mod` to be the release that added

@@ -224,7 +224,7 @@ func Parse(stderr, stdout io.Writer, args []string) (inv Invocation, cmd Command
 	fs.BoolVar(&inv.Multiline, "multiline", mg.Multiline(), "retain line returns in help text")
 	fs.BoolVar(&inv.Help, "h", false, "show this help")
 	fs.DurationVar(&inv.Timeout, "t", 0, "timeout in duration parsable format (e.g. 5m30s)")
-	fs.IntVar(&inv.Jobs, "j", mg.Jobs(), "maximum number of targets that do work at the same time (0 means no limit)")
+	fs.IntVar(&inv.Jobs, "j", mg.Jobs(), "maximum number of targets that do work at the same time")
 	fs.BoolVar(&inv.Keep, "keep", false, "keep intermediate mage files around after running")
 	fs.StringVar(&inv.Dir, "d", "", "directory to read magefiles from")
 	fs.StringVar(&inv.WorkDir, "w", "", "working directory where magefiles will run")
@@ -280,7 +280,7 @@ Options:
   -multiline  retain line returns in help docs (default: convert to spaces)
   -h          show description of a target
   -j <int>
-              maximum number of targets that do work at the same time (0 means no limit)
+              maximum number of targets that do work at the same time
   -keep       keep intermediate mage files around after running
   -t <string>
               timeout in duration parsable format (e.g. 5m30s)
